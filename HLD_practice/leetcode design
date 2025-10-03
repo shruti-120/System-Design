@@ -1,0 +1,65 @@
+user ------> -create acc ------------> Db - User ------------> external storage like s3 to store submission code
+             -see account                 - Problem
+             -see problems                - submission         -> user pagination to fetch leaderboard and submissions per
+             -write sol                   - problemStats          question list
+             -run/submit sol              - userStats          -> use cache to  frequently fetched problems, leaderboards, and hot stats
+             -see leaderboard             - leaderboard
+             -see stats(userId)
+             -see submissions                                  -> use cron - to update leaderboard periodically
+
+
+user - userId BIGINT pk,                                        create index userID_in_User on user(userId)
+       username VARCHAR unique,                                 create index problem_by_problemId on problem(problemId, name)
+       email VARCHAR,                                           create index submission_by_userId on submission(submissionId, userId)
+       rating INT,                                              create index submission_by_problemId on submission(submissionId, problemId)
+       createdAt TIMESTAMP,                                     create index submission_by_timestamp on submission(submissionId, timestamp, DESC)
+                                                                create index stat_by_probId on problemStats(statId, problemId)
+problem - problemId BIGINT pk,                                  create index stat_by_userId on userStats(statId, userId)
+          problemNo INT unique,                                 create index leaderBoard_by_probId on problemStats(leaderboardId, problemId)
+          title VARCHAR,
+          description VARCHAR,
+          difficulty enum('EASY', 'MEDIUM', 'HARD)
+          tags enum('TREE','ARRAY','QUEUE','DP')
+          testcase VARCHAR,
+          createdAT TIMESTAMP
+          
+submission - submissionId BIGINT pk,
+             problemId BIGINT fk,
+             userId BIGINT fk,
+             codeBody URL (s3 link),
+             status enum('ACCEPTED', 'WRONG ANSWER', 'TLE')
+             runtime INT,
+             timestamp TIMESTAMP,
+             
+problemStats - statId BIGINT pk,
+               problemId BIGINT fk,
+               NoOFUsersSolved INT,
+               submissionsCount BIGINT,
+               
+userStats - statId BIGINT pk,
+            userId BIGINT fk,
+            totalSubmissions BIGINT,
+            totalSolved INT,
+            createdAt TIMESTAMP,               
+
+leaderboard - leaderboardId BIGINT pk,
+              problemId  BIGINT fk,
+              userId BIGINT fk, 
+              solvedCount INT,
+              penaltyTime TimeStamp,
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

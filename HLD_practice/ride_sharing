@@ -1,0 +1,63 @@
+-register as rider or driver
+-rider can req ride
+-rider can view drivers nearby, 
+-rider can get fare estimates
+-driver can acc/rej rides
+-match riders and drivers
+-trip history
+-real- time tracking
+-payments
+
+                                      --------------->Cache like redis to cache nearby locations of drivers
+                                     |
+                                      ---------------> redis with ttl to periodically fetch live location
+                                     |                 of derivers, riders and rides tracking
+                                     |
+user -------auth----> db -users ------------> msgQueue to process(match) rides --->ride matching service(for booking) 
+                         -riders                                         |
+                         -drivers     |-----------------------------------                                  
+                         -cab         ---------------> payment gateway(3rd party like stripe) to process payments
+                         -ride                         this will use webhooks
+                         -rideHistory
+                         -payments
+                         
+
+user - userId pk auto-increment, name, ph, email, createdAt, type enum('Rider','Driver')
+rider - riderId pk auto-increment, userId fk, status enum('in a ride', 'waiting'), rideId fk, currLocation fk
+driver - driverId pk auto-increment, userId fk, status enum('available','completing nearBy ride'), rideId fk, cabId fk, currLocation fk
+cab - cabId pk auto-increment, driverId fk, cabNo, cabModel
+ride - rideId pk auto-increment, riderId fk nullable, driverId fk, timeLeft, pickup fk(from location), destination fk, fare,
+location - xCoordinate, yCoordinate, pk(xCoordinate, yCoordinate)
+paymentsHistory - paymentId pk auto-increment, rideId, paidBy fk, amt, status('Sucess','Failed','Pending')
+
+indexing - create index ride_rider_idx on ride(riderId);
+           create index ride_driver_idx on ride(driverId);
+           create index payments_ride_idx on paymentsHistory(rideId);
+           create index driver_status_idx on driver(status);
+
+Apis -> POST api/v1/register
+        Post /login, body(username, password) with jwt token
+        Post /ride body(riderId, location, pickup, dropoff) - returns list of nearby available drivers and fare
+        post/ride/{riderId}/{rideId} body(fare and other ride details)
+        get /location/{rideId}  - returns real time location of ride
+        get /rideHistory/{riderId} or {driverId}
+        get /paymentHistory/{riderId}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

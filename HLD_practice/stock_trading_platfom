@@ -1,0 +1,150 @@
+User - 1. userId [PK] - BIGINT
+       3. Balance - DOUBLE
+
+Stock - 1.StockId [PK] - BIGINT
+        2.Price - DOUBLE
+        3.Name - STRING
+
+Holding - 1.HoldingId [PK] - BIGINT    fetch holdings per user, index (userId)
+          2.StockId [FK] - BIGINT
+          3.qty - INT
+          4.AvgBuyPrice - DOUBLE
+          5.userId [FK] - BIGINT
+
+Order - 1.OrderId [PK] - BIGINT       fetch active orders for a user, index ( userId, status )
+        2.OrderType - STRING          top 5 traded stocks last 1hr, index (stockId, timestamp)
+        3.userId [FK] - BIGINT
+        4.status - STRING
+        5.stockId [FK] - BIGINT
+        6.qty - INT
+        7.timestamp - BIGINT
+
+POST api/v1/createUser (body - name, balance)
+POST api/v1/addStock  (body - name, price)
+POST api/v1/createHolding (body - stockId, userId, qty)
+POST api/v1/createOrder (body - userId, type, stockId, qty, price)
+GET api/v1/holdings/userId
+GET api/v1/orders/orderId
+GET api/v1/orders/user/{userId}?status=ACTIVE
+GET api/v1/stocks/topTraded?timeWindow=1h
+
+query for top 5 traded in last 1h - select stockId, SUM(qty) as totalQty from orders where status = 'EXECUTED'
+and timestamp >= NOW() - INTERVAL '1 HOUR' group by stockId orderBy, totalVolume DESC LIMTI 5;
+-----------------------------------------------------------------------------------------------------------------
+🔹 Step 1: Requirements
+
+Referral Flow
+- A user shares a referral link.
+- A referred user signs up.
+- If signup is successful + valid → reward is credited.
+
+Rewards
+- Referrer earns points/cash.
+- Referee may also get bonus.
+
+Queries / APIs
+-Fetch referral history (who I referred, their status).
+-Fetch reward history (my points, transactions).
+- Leaderboard (top referrers).
+- Scale
+- Millions of users.
+- High read traffic (users checking rewards).
+
+Writes are relatively smaller (referrals happen less frequently).
+
+🔹 Step 2: DB Schema (SQL)
+
+User Table: User (
+               userId BIGINT PRIMARY KEY,
+               name VARCHAR(255),
+               email VARCHAR(255) UNIQUE,
+               createdAt TIMESTAMP
+            )
+
+
+Referral Table: Referral (
+                   referralId BIGINT PRIMARY KEY,
+                   referrerId BIGINT REFERENCES User(userId),
+                   refereeId BIGINT REFERENCES User(userId),
+                   status ENUM('PENDING', 'SUCCESS', 'FAILED'),
+                   createdAt TIMESTAMP
+                )
+
+Reward Table: Reward (
+                 rewardId BIGINT PRIMARY KEY,
+                 userId BIGINT REFERENCES User(userId),
+                 points INT,
+                 type ENUM('REFERRAL_BONUS', 'SIGNUP_BONUS'),
+                 createdAt TIMESTAMP
+              )
+
+🔹 Step 3: Indexing Strategy
+
+- Referral(referrerId, createdAt) → fast lookup of referrals by a user.
+- Reward(userId, createdAt DESC) → fast lookup of reward history.
+- Referral(status, createdAt) → quick filtering of successful referrals.
+- Covering index on (userId, createdAt, points) for frequent reward history queries.
+
+🔹 Step 4: APIs (High Level)
+
+POST /referral/generate
+Input: userId
+Output: referralCode/link
+
+POST /referral/redeem
+Input: referralCode + newUserId
+Logic: validate code → mark referral → issue rewards.
+
+GET /referral/history/{userId}
+Returns list of referrals made, with status.
+
+GET /reward/history/{userId}
+Returns user’s reward transactions (paginated).
+
+GET /leaderboard
+Top N users with highest referral rewards.
+
+🔹 Step 5: Scaling & Optimizations
+
+Replication → Reads (history fetch, leaderboard) can go to read replicas.
+Sharding → If very large, shard Reward and Referral by userId.
+Caching (Redis) → Frequently accessed leaderboard or reward points balance.
+Async Processing → Referral validation + reward issuing can be async (via Kafka / RabbitMQ).
+Materialized Views → Precompute leaderboard daily for efficiency.
+
+🔹 Step 6: Example Queries
+
+Referral History
+
+SELECT refereeId, status, createdAt
+FROM Referral
+WHERE referrerId = :userId
+ORDER BY createdAt DESC
+LIMIT 20;
+
+
+Reward History
+
+SELECT points, type, createdAt
+FROM Reward
+WHERE userId = :userId
+ORDER BY createdAt DESC
+LIMIT 20;
+
+
+Leaderboard
+
+SELECT userId, SUM(points) as totalPoints
+FROM Reward
+GROUP BY userId
+ORDER BY totalPoints DESC
+LIMIT 10;
+
+
+👉 This way, in the interview, you show:
+
+Schema design ✅
+Indexing ✅
+API design ✅
+Query examples ✅
+Scalability thoughts ✅

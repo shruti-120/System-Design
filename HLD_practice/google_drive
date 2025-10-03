@@ -1,0 +1,46 @@
+users ------->user acc ----> auth -----> create folders and file ---------------> db -> user_acc  -----> cache ->file/folder history
+                                 share folders and file(permission)          -> file                   -> common search query
+                                 search folders and file                     -> folder
+                                 upload/download folders/files               -> fileVersion
+                                                                             -> share
+                                                                           |
+                                                                           |
+                                                                           |
+                                                                         log - when history changes/file edits
+                                                                               when upload/download
+                                                                                 files created/deleted
+
+user_acc -> userId BIGINT pk,
+            name VARCHAR,
+            email VARCHAR,                                   
+            createdAt TIMESTAMP,
+
+file -> fileId BIGINT pk,                             create index on file(userId, fileId, content) - to fetch file and contents easily
+        userId BIGINT fk,                             create index on folder(userId, folderId, name) - to fetch folders of users on search
+                                                      create index on file(userId, fileId, name) - to fetch file of users on search
+        parentFolderId BIGINT fk,                     create index on fileVersion(fileId, timestamp, desc) - to fetch file history
+        name VARCHAR,
+        createAt TIMESTAMP,
+        updateAt TIMESTAMP,                           search in file and folder where parent Id  = folderid
+        deletedAt TIMESTAMP,                          select f.name, fd.name from folder fd join file f on f.userId = fd.userId where f.parentId =
+        content VARCHAR (link to s3 bucket)                     id and fd.parentid = id orderBy updatedAt desc;
+
+fileVersion -> fileVersionId BIGINT pk,               select content from file where fileId = id;
+               fileId BIGINT fk,
+               content varChar (s3 link),             select 
+               timestamp TIMESTAMP,
+
+folder -> folderId BIGINT pk,
+          parentId BIGINT fk,
+          userId BIGINT fk,
+          name VARCHAR,
+          createdAt TIMESTAMP,
+          deletedAt TIMESTAMP,
+
+share -> shareId BIGINT pk,
+         shareLink VARCHAR unique NULLABLE,
+         sharedBy BIGINT fk,
+         permission enum('READ ONLY', 'EDIT'),
+         sharedUserIdTo BIGINT NULLABLE fk,
+         sharedToEmailId VARCHAR
+         timestamp TIMESTAMP,

@@ -1,0 +1,36 @@
+req - user can choose notif type, system should check for order status, portfoliovalue, general announcement, 3rd party
+      like gmail, sms involved, retry logic
+
+user - userId pk, notifPrefernce, email, ph, name, cratedAt
+portfolio - portfolioId pk, Balance, holdingId fk, userId fk, createdAt
+Holding - id pk, StockId fk, qty, avgBuyprice, createdAt
+stock - id stock, price, ticker, createdAt
+order - orderid pk, userId fk, amt, type, createdAt
+
+indexing on userid, prefernce, on order(orderId, userId)
+user api - Get spi/v1/notif/portfolio, get api/v1/notif/genreal, get api/v1/orders
+
+
+
+
+1. user can choose prefernce and Db will store it
+2.backend has a order service, user service, notif service
+3.there will be a msg queue which will keep all placed orders yet to execute(orders will have idempotnecy key, which the
+  notif service will check if notif for that order has already been sent or not)
+4.this que will interact will notif serivce, once a order is placed and added to queue notif serice will send notif,
+  and once a order is executed, before moving it out of queue, notif service will send notif
+5.notif serivce will check for order's userId prefernce and send notif accordingly.
+6.there will be a redis which will ping user/portfolio service every 24s and send to notif sevice to send notif for
+  portfolio update
+
+7.we can also store portfoilio value and details in cache so that we dont need to go to db every time of, user checks its
+  protfolio in less than 24hrs
+8.there will will be a 3rd party integeration to send emails and sms notif service will use this to send email, sms,
+9.in case the notif fails, there will be retry logic which could be sent after fixed intervals like 3s or ( 2s, 4s, 6s..)
+10.notif will also have idempotnecy key to check if it has been already sent or retried and for duplication
+11.redis will also ping admin serive every 5 to 10s for genral updates and send to notif service
+12.we can also use cron job for all the ping activities and use redis for caching(portfolio value, general updates)
+13.for scaling we can use load balancer on notif service, and can create replicas for read heavy operations like genral
+  portfiolio updates
+14.we can use logging for succusssfull or errornious sending iof notification
+15.in case of large traffic we can also use multiple queues to process orders faster

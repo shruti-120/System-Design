@@ -1,0 +1,27 @@
+ clarify req: - admins can create cuopons - system will genrate cupon code
+                users can apply cupons on orders
+                users can see active cupons
+                cupon have limit per users and a global limit
+                system need to validate user and cupon
+                there should be some concurrency control incase limit is almost reached and 2 or more users are trying to apply it
+                so there should also be something like first come first serve for user to apply cupons
+
+ Db schema -
+    users  - user id (pk), name, email
+    cuponUserLimt - id, userId(fk), cuponId(fk), usageleft
+    orders - orderId(pk), userId(fk), amt
+    cupon - cuponId(pk) , code, global limit, type (enum), expiry, status
+
+ apis -
+    post api/v1/createCupon - (global limit, type, expiry) res - cupon code and details, before creating check if admin or not
+    post api/v1/createUser - (name, email) check for admin
+    get api/v1/getCupons?status=active res - cupon code and validity - authenticate and authorize user
+    Post api/v1/redeemCuopn - (cupon code, order id, userId) - authenticate and authorize userId, validate cupon ( check for global limit, user limit and expiry)
+                                validate order and deduct amoount and show final amt; lock will also be applied here
+                                res - final amt
+
+ indexes - on cupon (expiry , code) to fetch active cupons
+           on userId in user and (couponId, usageLeft) on cuponUserLimit
+           on (cuponId, global limit) for global limit of cupon
+
+ use redis caching for fetching active cupons, get user and global limit

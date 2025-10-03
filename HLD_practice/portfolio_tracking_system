@@ -1,0 +1,230 @@
+Req - users can create a portfolio, view portfolio, see profit/loss, history, fetch stock prices by time stamp
+      portfolio has stock and buy price, qty
+
+User - userId pk, name, email,
+portfolio - porfoilioId pk, portfiolioValue, balance,
+stock - stock id pk , price;
+holding - id pk, stockId fk, avgBuyPrice, qty, userId fk
+profileHistory - id pk, portfolioId fk, value, timestamp
+Order - orderId pk, userId fk, type, status, stockId fk, qty, amt;
+
+User - Post api/v1/create_portfolio, Get api/v1/view_portfolio, api/v1/getHolding/{userId} - internal api,
+       Get api/v1/getstockPrices/{userId}, call getHolding - then api/v1/fetchCurrentStockPrice from external service
+       Post api/v1/createOrder, Get api/v1/getProfileHistory/{portfolioId}
+
+user(client) <-> api gateway - routing, auth -> load balancer <-> caching(redis) <-> database <-> external service
+
+-> cache profile history, real time stock prices, holdings,
+-> use otimistic lock on db in case of fallback else use redis lock while placing orders,
+-> can use replication for read heavy operation like fetch stock history, fetch holding etc;
+-> maybe we can use msgQueue to process Orders by FIFO
+
+indexing - on portfolio (portfolioId), on holding(id, userId),  profilehistory (value, timestamp)
+------------------------------------------------------------------------------------------------------------------------
+User(
+  userId BIGINT PRIMARY KEY,
+  name VARCHAR,
+  email VARCHAR UNIQUE,
+  createdAt TIMESTAMP
+)
+
+Portfolio(
+  portfolioId BIGINT PRIMARY KEY,
+  userId BIGINT REFERENCES User(userId),
+  name VARCHAR,            -- e.g., "Retirement", "My Smallcase"
+  cashBalance DECIMAL(18,2),
+  createdAt TIMESTAMP
+)
+
+Holding(
+  holdingId BIGINT PRIMARY KEY,
+  portfolioId BIGINT REFERENCES Portfolio(portfolioId),
+  stockId BIGINT REFERENCES Stock(stockId),
+  qty BIGINT,
+  avgBuyPrice DECIMAL(18,4),
+  updatedAt TIMESTAMP,
+  -- optional: version INT for optimistic locking
+)
+
+Order(
+  orderId BIGINT PRIMARY KEY,
+  portfolioId BIGINT REFERENCES Portfolio(portfolioId),
+  userId BIGINT,            -- denormalized for easy queries
+  stockId BIGINT,
+  orderType ENUM('MARKET','LIMIT'),
+  side ENUM('BUY','SELL'),
+  qty BIGINT,
+  limitPrice DECIMAL NULL,
+  executedPrice DECIMAL NULL,
+  status ENUM('PENDING','PARTIAL','FILLED','CANCELLED','FAILED'),
+  createdAt TIMESTAMP,
+  updatedAt TIMESTAMP
+)
+
+Stock(
+  stockId BIGINT PRIMARY KEY,
+  ticker VARCHAR UNIQUE,
+  name VARCHAR
+)
+
+StockPriceHistory(
+  id BIGINT PRIMARY KEY,
+  stockId BIGINT,
+  price DECIMAL(18,4),
+  ts TIMESTAMP
+  -- partition by date if huge
+)
+
+ProfileHistory  -- snapshots for historical portfolio value
+(
+  id BIGINT PRIMARY KEY,
+  portfolioId BIGINT,
+  portfolioValue DECIMAL(18,4),
+  cashBalance DECIMAL(18,4),
+  timestamp TIMESTAMP
+)
+
+##API -
+POST /api/v1/portfolios
+Body: { userId, name, initialDeposit } → returns portfolioId.
+
+GET /api/v1/portfolios/{portfolioId}
+Returns holdings (qty, avgBuyPrice), cashBalance, currentPortfolioValue, unrealized P/L per holding.
+
+GET /api/v1/portfolios/{portfolioId}/history?from=...&to=...
+Returns ProfileHistory rows.
+
+POST /api/v1/orders
+Body: { portfolioId, userId, stockTicker, side, orderType, qty, limitPrice? }
+Response: orderId (idempotency key required)
+
+GET /api/v1/orders/{orderId}
+
+GET /api/v1/stocks/{ticker}/price?from=&to=
+(internal: read from StockPriceHistory or cache)
+
+##Where to cache / what to store in Redis:
+
+-Latest price per ticker: stock:latest:{ticker} (very hot read) — TTL small (e.g., 1s-5s), updated by price feed consumer.
+-Portfolio holdings (optional): cache computed portfolio summary to reduce joins for a few seconds. Invalidate on order execution.
+-ProfileHistory recent window: cache latest N snapshots for quick chart display.
+-Use Redis PUB/SUB or stream to notify services when prices update (push to websockets).\
+
+##Concurrency / correctness (what to say)
+
+  Order placement flow (recommended):
+  -Client POST /orders with idempotency key → API persists PENDING order (DB).
+  -Publish order to a queue (orders Kafka topic).
+  -Order worker (matching/exec engine) consumes queue, reserves cash/holdings (atomic update) and executes by calling external broker or matching engine.
+  -Worker updates Order.status, executedPrice, and updates Holding & Portfolio.cashBalance. Use DB transaction + optimistic locking (version) on Holding/Portfolio to prevent lost updates.
+  -Optimistic locking: UPDATE Holding SET qty = qty +/- ?, avgBuyPrice = ?, version = version + 1 WHERE holdingId = ? AND version = ?. Retry on failure.
+  -Redis lock (RedLock) only for short critical sections if you need a distributed mutex (but explain trade-offs).
+
+##Stock price ingestion (external provider)
+
+  -Provider examples: IEX Cloud, AlphaVantage, Polygon.io, or a brokerage market feed. (Say one: IEX Cloud.)
+  Ingestion pipeline:
+  -Market feed consumer → publish to Kafka topic price_updates.
+  -Price worker updates StockPriceHistory (append-only) and updates Redis latest price (low-latency).
+  -For scale, partition price topics by ticker hash.
+
+##Indexing recommendations (what to say and why)
+
+  -Holding(portfolioId, stockId) composite index — fast fetch per portfolio.
+  -Order(portfolioId, status, createdAt) — fast user order history and pending orders.
+  -StockPriceHistory(stockId, ts) — time-series queries and RANGE scans; partition by date.
+  -ProfileHistory(portfolioId, timestamp DESC) — fast latest N snapshots.-
+  -Discuss trade-offs: indexes speed reads but slow writes (orders, price writes are high-volume), so balance and use partitioning.
+
+##Scaling & architecture (high-level points only)
+
+  Read-heavy optimizations:
+  -Read replicas for portfolio reads.
+  -Cache latestPrices in Redis; use cache-aside pattern.
+  -Precompute snapshots (ProfileHistory) periodically (cron/stream processor) to avoid recomputing full portfolio repeatedly.
+
+  Write-heavy components:
+  -Orders -> Kafka -> worker pool to process; snapshot portfolio after significant events or at intervals.
+
+  Partitioning:
+  -For StockPriceHistory and Order table partition by time (daily) or by stockId/userId depending on access pattern.
+  -Realtime UX: Websocket service subscribed to price updates for clients; push portfolio deltas on executions.
+
+##Monitoring & SLOs (short)
+
+  Track:
+  -Price-feed lag (time from external feed to Redis).
+  -Order processing latency (queue -> executed).
+  -Cache hit ratio for latest price.
+  -Failed/retreated order rate.
+  -Alerts: feed disconnect, too many optimistic lock retries, reconciliation drift.
+
+
+                +-----------------+
+                |     Client      |
+                | (Web/Mobile UI) |
+                +-----------------+
+                          |
+                          v
+                 +-------------------+
+                 |   API Gateway     |
+                 | (Auth, Routing)   |
+                 +-------------------+
+                          |
+                          v
+                  +-----------------+
+                  | Load Balancer   |
+                  +-----------------+
+                          |
+          -------------------------------------
+          |                                   |
+          v                                   v
++---------------------+            +---------------------+
+|  Portfolio Service  |            |   Order Service     |
+| (CRUD Portfolios,   |            | (Place/Exec Orders, |
+|  Holdings, P/L)     |            |  Optimistic Lock)   |
++---------------------+            +---------------------+
+          |                                   |
+          v                                   |
++---------------------+                       |
+| ProfileHistory/     |                       |
+| Snapshot Service    |                       |
++---------------------+                       |
+          |                                   |
+          v                                   |
+  +----------------------------------+        |
+  |            Database              |        |
+  |----------------------------------|        |
+  | User, Portfolio, Holding, Order  |        |
+  | Stock, StockPriceHistory,        |        |
+  | ProfileHistory                   |        |
+  +----------------------------------+        |
+          ^                                   |
+          |                                   |
+          |                                   v
+          |                         +----------------------+
+          |                         |  Message Queue       |
+          |                         | (Orders → FIFO)      |
+          |                         +----------------------+
+          |                                   |
+          |                                   v
+          |                         +----------------------+
+          |                         | Order Worker(s)      |
+          |                         | - validate balance   |
+          |                         | - update holdings    |
+          |                         | - persist snapshot   |
+          |                         +----------------------+
+          |
+          v
++-------------------------+
+|   Cache (Redis)         |
+| - Latest stock prices   |
+| - Recent portfolio data |
++-------------------------+
+          ^
+          |
+          v
++-------------------------+
+| External Price Feed     |
+| (e.g. IEX, AlphaVantage)|
++-------------------------+
